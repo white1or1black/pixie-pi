@@ -1,5 +1,6 @@
 # pixie-pi
 
+[![CI](https://github.com/white1or1black/pixie-pi/actions/workflows/ci.yml/badge.svg)](https://github.com/white1or1black/pixie-pi/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > An autonomous, tool-using AI coding agent that runs in your terminal — as a
