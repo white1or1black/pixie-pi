@@ -1,0 +1,10 @@
+# Normalize line endings: keep the repo LF regardless of checkout platform
+# (avoids CRLF-driven failures in the edit/diff and parsing tests on Windows).
+* text=auto eol=lf
+
+# Binaries stay binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary

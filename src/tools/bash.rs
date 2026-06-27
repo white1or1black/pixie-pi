@@ -244,7 +244,10 @@ fn uuid_brief() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
-#[cfg(test)]
+// Tests invoke unix shell commands (`printf`, `sleep`) via `/bin/sh -c`; on
+// Windows the tool shells out to `cmd.exe`, where these don't exist. Gate the
+// whole module to unix so `cargo test` stays green on Windows CI.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use crate::agent::tool::AgentTool;
