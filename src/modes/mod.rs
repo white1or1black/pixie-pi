@@ -1,26 +1,28 @@
-//! Run modes. Only two are supported (`packages/coding-agent/modes`):
-//! `print` (command-line, one-shot) and `interactive` (REPL).
+//! Run modes (`packages/coding-agent/modes`): `print` (command-line, one-shot),
+//! `interactive` (REPL), and `stream_json` (Claude Code `stream-json` wire,
+//! one-shot or persistent stdin multi-turn).
 
 pub mod interactive;
 pub mod print;
+pub mod stream_json;
 
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::context::AgentEvent;
-use crate::session::AgentSession;
+use pixie_pi::agent::context::AgentEvent;
+use pixie_pi::session::AgentSession;
 
 /// Outcome of draining a run's event stream.
 pub struct RunOutcome {
-    pub final_messages: Option<Vec<crate::ai::Message>>,
-    pub last_usage: Option<crate::ai::Usage>,
+    pub final_messages: Option<Vec<pixie_pi::ai::Message>>,
+    pub last_usage: Option<pixie_pi::ai::Usage>,
     pub had_error: bool,
 }
 
 /// Drive a run to completion. `on_event` is called for every event (returning
 /// `true` from it stops consumption). This is the shared core used by both
 /// modes; it wires up Ctrl-C → cancellation and finalizes the session.
-pub async fn drive<F>(session: &mut AgentSession, prompts: Vec<crate::ai::Message>, mut on_event: F) -> RunOutcome
+pub async fn drive<F>(session: &mut AgentSession, prompts: Vec<pixie_pi::ai::Message>, mut on_event: F) -> RunOutcome
 where
     F: FnMut(&AgentEvent) -> bool,
 {
@@ -71,7 +73,7 @@ where
             // error/aborted stop reason (not an AgentEvent::Error), so detect it
             // here to get a non-zero exit code.
             AgentEvent::TurnEnd { message, .. } => {
-                use crate::ai::types::StopReason;
+                use pixie_pi::ai::types::StopReason;
                 if matches!(
                     message.stop_reason,
                     StopReason::Error | StopReason::Aborted
@@ -99,7 +101,7 @@ where
 /// Fold a turn's usage into the session's running total and remember it as the
 /// most recent turn. Called once per `AgentEvent::Usage` so multi-turn runs sum
 /// every turn rather than only the last.
-fn record_turn_usage(session: &mut AgentSession, last: &mut Option<crate::ai::Usage>, u: &crate::ai::Usage) {
+fn record_turn_usage(session: &mut AgentSession, last: &mut Option<pixie_pi::ai::Usage>, u: &pixie_pi::ai::Usage) {
     session.add_usage(u);
     *last = Some(u.clone());
 }
@@ -107,15 +109,15 @@ fn record_turn_usage(session: &mut AgentSession, last: &mut Option<crate::ai::Us
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::types::Usage;
+    use pixie_pi::ai::types::Usage;
 
     fn test_session() -> AgentSession {
-        let model = crate::ai::builtin_models()[0].clone();
+        let model = pixie_pi::ai::builtin_models()[0].clone();
         AgentSession::new(
             std::path::PathBuf::from("."),
             "sys".into(),
             model,
-            crate::ai::ThinkingLevel::Off,
+            pixie_pi::ai::ThinkingLevel::Off,
             vec![],
             reqwest::Client::new(),
         )

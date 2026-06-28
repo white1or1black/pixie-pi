@@ -6,10 +6,10 @@ use anyhow::Result;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
-use crate::ai::{self, ThinkingLevel};
+use pixie_pi::ai::{self, ThinkingLevel};
 use crate::modes::drive;
 use crate::render::{blue, dim, green, magenta, red, yellow, EventRenderer};
-use crate::session::AgentSession;
+use pixie_pi::session::AgentSession;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const HISTORY_FILE: &str = "history.txt";
@@ -26,7 +26,7 @@ pub async fn run_interactive(
     show_thinking: bool,
 ) -> Result<i32> {
     let mut rl = DefaultEditor::new()?;
-    let hist_path = crate::config::agent_dir().join(HISTORY_FILE);
+    let hist_path = pixie_pi::config::agent_dir().join(HISTORY_FILE);
     let _ = rl.load_history(&hist_path);
 
     print_banner(&session);
@@ -98,7 +98,7 @@ async fn run_one(session: &mut AgentSession, msg: ai::Message, show_thinking: bo
     let mut renderer = EventRenderer::new(show_thinking);
     drive(session, vec![msg], |ev| {
         renderer.handle(ev);
-        matches!(ev, crate::agent::context::AgentEvent::AgentEnd { .. })
+        matches!(ev, pixie_pi::agent::context::AgentEvent::AgentEnd { .. })
     })
     .await;
     // Print a compact cost/context line after each turn.

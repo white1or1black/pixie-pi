@@ -3,8 +3,8 @@
 
 use serde_json::Value;
 
-use crate::agent::context::AgentEvent;
-use crate::ai::stream::AssistantMessageEvent;
+use pixie_pi::agent::context::AgentEvent;
+use pixie_pi::ai::stream::AssistantMessageEvent;
 
 /// Whether color output is enabled (respects `NO_COLOR` and non-TTY).
 pub fn colors_enabled() -> bool {
@@ -136,10 +136,10 @@ impl EventRenderer {
     pub fn handle(&mut self, ev: &AgentEvent) -> bool {
         match ev {
             AgentEvent::MessageUpdate { event } => self.handle_stream_event(event),
-            AgentEvent::MessageStart(crate::ai::types::Message::Assistant(_)) => {
+            AgentEvent::MessageStart(pixie_pi::ai::types::Message::Assistant(_)) => {
                 self.text_open = true;
             }
-            AgentEvent::MessageEnd(crate::ai::types::Message::Assistant(_)) => {
+            AgentEvent::MessageEnd(pixie_pi::ai::types::Message::Assistant(_)) => {
                 if self.text_open {
                     println!();
                     self.text_open = false;

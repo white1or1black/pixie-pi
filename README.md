@@ -77,8 +77,11 @@ pixie-pi -p "List the .rs files under src/ and summarize the architecture"
 # Piped stdin is non-interactive
 echo "explain this stack trace" | pixie-pi
 
-# NDJSON event stream (for piping into other tools)
+# NDJSON event stream (pixie's own event schema, for piping into other tools)
 pixie-pi --mode json -p "what tools are available?"
+
+# Claude Code stream-json (drop-in for the `claude` CLI — see below)
+pixie-pi -p "say hi" --output-format stream-json --verbose
 
 # Interactive REPL
 pixie-pi
@@ -186,6 +189,11 @@ pixie-pi [OPTIONS] [MESSAGE]...
 Options:
   -p, --print                 Non-interactive one-shot run
       --mode <text|json>      Output mode for print runs (default: text)
+      --output-format <text|stream-json>  Claude Code stream-json NDJSON (drop-in for `claude`)
+      --input-format <text|stream-json>   stream-json ⇒ persistent stdin multi-turn driver
+      --session-id <id>       Claude-compatible session id
+      --permission-mode <mode>  Accepted; resolves to allow-all (bypass)
+      --dangerously-skip-permissions  Skip permission prompts (bypass)
       --model <id>            sonnet | opus | haiku (fuzzy-matched)
       --provider <name>       (default: anthropic)
       --api-key <key>         (default: $ANTHROPIC_API_KEY)
@@ -209,6 +217,33 @@ Options:
 
 `@file` arguments are inlined into the prompt: `pixie-pi @notes.md "summarize this"`.
 
+## Claude Code `stream-json` compatibility
+
+pixie-pi can be spawned in place of the `claude` CLI: it speaks Claude Code's
+`stream-json` wire protocol, emitting `system`/`assistant`/`user`/`result`
+NDJSON lines that callers (e.g. [Pixie](https://github.com/white1or1black/pixie))
+read off stdout until a `result` line ends each turn.
+
+```bash
+# One shot: one turn of stream-json output
+pixie-pi -p "say hi" --output-format stream-json --verbose
+
+# Persistent: multi-turn over one process — read {"type":"user",...} JSONL
+# turns from stdin, emit a result line per turn, exit on stdin EOF
+pixie-pi --print --output-format stream-json --verbose \
+         --input-format stream-json --permission-mode bypassPermissions \
+         --session-id <id>
+```
+
+The mapper is a **pure** library function (`pixie_pi::compat::map_events`) with
+no I/O, so SDK consumers can reuse it directly. Permission brokering is
+**bypass-only** by design (matches the daily-driver path): every
+`--permission-mode` and `--dangerously-skip-permissions` resolves to allow-all.
+Unknown permission modes are accepted and treated as bypass rather than
+rejected, so a caller's argv never errors. Interactive permission brokering is a
+documented future extension — its hook point is already isolated at the
+`ToolGate` in the agent loop.
+
 ## Architecture
 
 | Layer | Modules |
@@ -217,7 +252,9 @@ Options:
 | Agent loop | `src/agent/` — `agent_loop` (double loop), `context` (events), `tool` (trait + gate) |
 | Tools | `src/tools/` — `read`/`write`/`edit`/`bash`/`grep`/`find`/`ls`/`skill` + `truncate`/`edit_diff`/`util` |
 | Session / skills / prompt | `src/session.rs`, `src/skills.rs`, `src/prompt.rs`, `src/config.rs` |
-| Entry / modes | `src/main.rs`, `src/cli.rs`, `src/app.rs`, `src/modes/` (`print`, `interactive`), `src/render.rs` |
+| Claude `stream-json` compat | `src/compat/` — pure `AgentEvent` → Claude NDJSON mapper (`map_events`, `to_ndjson`) |
+| Library crate | `src/lib.rs` — public core + re-exports + `prelude` (the bin is a thin wrapper) |
+| Entry / modes | `src/main.rs`, `src/cli.rs`, `src/app.rs`, `src/modes/` (`print`, `interactive`, `stream_json`), `src/render.rs` |
 
 The agent loop streams a response, executes tool calls (parallel by default,
 sequential when a tool requests it), feeds results back, and repeats until the

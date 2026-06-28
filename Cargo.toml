@@ -8,6 +8,9 @@ description = "pixie-pi — an AI coding agent (read/write/edit/bash/grep/find/l
 license = "MIT"
 repository = "https://github.com/white1or1black/pixie-pi"
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "pixie-pi"
 path = "src/main.rs"
@@ -47,7 +50,6 @@ unicode-normalization = "0.1"
 
 # interactive terminal
 rustyline = "14"
-crossterm = "0.28"
 
 # misc
 uuid = { version = "1", features = ["v4"] }

@@ -7,16 +7,28 @@ use std::time::Duration;
 
 use anyhow::bail;
 
-use crate::agent::tool::AgentTool;
-use crate::cli::{AppMode, Args, OutputMode};
-use crate::prompt::build_system_prompt;
-use crate::session::AgentSession;
-use crate::tools;
-use crate::ai::{self, resolve_model, Model, ThinkingLevel};
+use pixie_pi::agent::tool::AgentTool;
+use crate::cli::{AppMode, Args, InputFormat, OutputFormat, OutputMode};
+use pixie_pi::prompt::build_system_prompt;
+use pixie_pi::session::AgentSession;
+use pixie_pi::tools;
+use pixie_pi::ai::{self, resolve_model, Model, ThinkingLevel};
 
-/// Decide which mode to run. Mirrors pi's `resolveAppMode`:
-/// `--print` or non-TTY stdin ⇒ print mode; otherwise interactive.
+/// Decide which mode to run.
+///
+/// Machine-facing `stream-json` wire formats take precedence over the
+/// text/interactive split — they are NDJSON protocols, never a terminal chat:
+/// `--input-format stream-json` ⇒ persistent stdin multi-turn;
+/// `--output-format stream-json` ⇒ one-shot Claude NDJSON. Otherwise this
+/// mirrors pi's `resolveAppMode`: `--print` or non-TTY stdin ⇒ print mode, else
+/// interactive.
 pub fn resolve_app_mode(args: &Args, stdin_is_tty: bool) -> AppMode {
+    if args.input_format() == InputFormat::StreamJson {
+        return AppMode::StreamJsonPersistent;
+    }
+    if args.output_format() == OutputFormat::StreamJson {
+        return AppMode::StreamJsonOneShot;
+    }
     if args.print || !stdin_is_tty {
         let output = OutputMode::parse(&args.mode).unwrap_or(OutputMode::Text);
         AppMode::Print(output)
@@ -92,13 +104,13 @@ pub fn build_session(args: &Args, cwd: &Path, messages: Vec<ai::Message>) -> any
     // Discover Claude Code–compatible skills and register the `skill` tool when
     // any exist (and tools aren't fully disabled / excluded). Project skills
     // (`.claude/skills`) shadow user skills (`~/.claude/skills`).
-    let skills = std::sync::Arc::new(crate::skills::Skills::discover(cwd));
+    let skills = std::sync::Arc::new(pixie_pi::skills::Skills::discover(cwd));
     let skills_enabled = !args.no_tools
         && !args.no_builtin_tools
         && !skills.skills.is_empty()
         && !args.exclude_tools.iter().any(|n| n == "skill");
     if skills_enabled {
-        tools.push(std::sync::Arc::new(crate::tools::skill::SkillTool::new(
+        tools.push(std::sync::Arc::new(pixie_pi::tools::skill::SkillTool::new(
             cwd.to_path_buf(),
             skills.clone(),
         )));
@@ -120,7 +132,7 @@ pub fn build_session(args: &Args, cwd: &Path, messages: Vec<ai::Message>) -> any
             } else {
                 Some(args.append_system_prompt.join("\n\n"))
             };
-            build_system_prompt(crate::prompt::PromptOptions {
+            build_system_prompt(pixie_pi::prompt::PromptOptions {
                 cwd,
                 tool_names: &tools.iter().map(|t| t.name().to_string()).collect::<Vec<_>>(),
                 extra: extra.as_deref(),
@@ -129,22 +141,40 @@ pub fn build_session(args: &Args, cwd: &Path, messages: Vec<ai::Message>) -> any
         }
     };
 
+    // Claude-style `--session-id <id>` / `--resume <id>` map to a per-project
+    // session file `<project session dir>/<id>.jsonl` (loaded if it exists,
+    // created on first save otherwise). This gives the persistent stream-json
+    // driver cross-restart continuity like Pixie's continue/resume.
+    let claude_session_id = args
+        .session_id
+        .clone()
+        .or_else(|| args.resume_id().map(str::to_string));
+
     let session_file = if args.no_session {
         None
     } else if let Some(sess) = &args.session {
         Some(expand_session_path(sess, cwd))
+    } else if let Some(id) = &claude_session_id {
+        Some(pixie_pi::config::project_session_dir(cwd).join(format!("{id}.jsonl")))
     } else {
-        Some(crate::config::session_file(cwd))
+        Some(pixie_pi::config::session_file(cwd))
     };
 
     // Load an existing transcript for continue/resume.
+    let want_resume = args.continue_session
+        || args.resume_requested()
+        || args.session.is_some()
+        || claude_session_id.is_some();
     let loaded = match &session_file {
-        Some(path) if args.continue_session || args.resume || args.session.is_some() => {
+        Some(path) if want_resume => {
             if path.exists() {
                 AgentSession::load(path).ok()
             } else if args.session.is_some() {
-                bail!("Session file not found: {}", path.display());
+                // An explicit `--session <file>` must already exist.
+                bail!("Session file not found: {}", path.display())
             } else {
+                // `--continue`/`--resume`/`--session-id` for a not-yet-created
+                // session: start fresh; the file is created on first save.
                 None
             }
         }
@@ -174,12 +204,12 @@ pub fn build_session(args: &Args, cwd: &Path, messages: Vec<ai::Message>) -> any
 }
 
 fn expand_session_path(sess: &str, cwd: &Path) -> PathBuf {
-    let expanded = crate::tools::util::expand_tilde(sess);
+    let expanded = pixie_pi::tools::util::expand_tilde(sess);
     if expanded.is_absolute() {
         expanded
     } else {
         // Treat as an id prefix under this project's session dir.
-        crate::config::project_session_dir(cwd).join(format!("{sess}.jsonl"))
+        pixie_pi::config::project_session_dir(cwd).join(format!("{sess}.jsonl"))
     }
 }
 
@@ -224,7 +254,7 @@ fn stdin_to_prompt(content: String) -> Option<ai::Message> {
 #[cfg(test)]
 mod tests {
     use super::stdin_to_prompt;
-    use crate::ai::types::Message;
+    use pixie_pi::ai::types::Message;
 
     #[test]
     fn stdin_to_prompt_ignores_blank_input() {

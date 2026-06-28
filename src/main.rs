@@ -5,23 +5,21 @@
 //!   one-shot, streams the answer, exits.
 //! - **interactive**: `pi` (with a TTY) — a conversational REPL with slash
 //!   commands, streaming responses, and tool-call display.
+//!
+//! This is a thin binary: the reusable core lives in the `pixie_pi` library
+//! crate. Here we only own CLI parsing (`cli`), session/mode dispatch (`app`,
+//! `modes`), and terminal rendering (`render`).
 
-// This binary also exposes a reusable library surface (the `ai`, `agent`,
-// `tools`, and `session` modules). Public items not consumed by the binary
-// itself form that API, so we don't treat them as dead code.
+// The binary's own `render` module exposes a full ANSI palette; not every
+// helper is exercised on every code path, so silence the lone unused-palette
+// warning rather than carve up a coherent set of color functions. (The library
+// crate deliberately does NOT carry this allow.)
 #![allow(dead_code)]
 
-mod ai;
-mod agent;
 mod app;
 mod cli;
-mod config;
 mod modes;
-mod prompt;
 mod render;
-mod session;
-mod skills;
-mod tools;
 
 use std::io::IsTerminal;
 
@@ -31,6 +29,7 @@ use clap::Parser;
 use crate::cli::{AppMode, Args};
 use crate::modes::interactive::run_interactive;
 use crate::modes::print::run_print;
+use crate::modes::stream_json::{run_stream_json_oneshot, run_stream_json_persistent};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -96,5 +95,52 @@ async fn main() -> Result<()> {
             let code = run_interactive(session, initial_message, args.verbose).await?;
             std::process::exit(code);
         }
+        AppMode::StreamJsonOneShot => {
+            // `--output-format stream-json`: one shot. Prompt resolution mirrors
+            // print (positional/@file, else piped stdin as a text prompt).
+            let prompt = match initial_message {
+                Some(m) => Some(m),
+                None if !stdin_is_tty => app::read_stdin_prompt(),
+                None => None,
+            };
+            let Some(prompt) = prompt else {
+                eprintln!(
+                    "error: no prompt provided. Pass a message or pipe input \
+                     (stream-json output needs a prompt)."
+                );
+                std::process::exit(1);
+            };
+            let mut session = app::build_session(&args, &cwd, Vec::new())?;
+            let sid = session_id(&args);
+            let code =
+                run_stream_json_oneshot(&mut session, prompt, &sid, &args.permission_mode_label())
+                    .await?;
+            std::process::exit(code);
+        }
+        AppMode::StreamJsonPersistent => {
+            // `--input-format stream-json`: persistent multi-turn. stdin is the
+            // JSONL turn stream, so only an argv seed (`-p`/positional) may start
+            // turn one — never read stdin as a text prompt here.
+            let mut session = app::build_session(&args, &cwd, Vec::new())?;
+            let sid = session_id(&args);
+            let code = run_stream_json_persistent(
+                &mut session,
+                initial_message,
+                &sid,
+                &args.permission_mode_label(),
+            )
+            .await?;
+            std::process::exit(code);
+        }
     }
+}
+
+/// Stable id for the `system`/`result` NDJSON lines: the explicit `--session-id`,
+/// else `--resume <id>`, else a freshly generated uuid so every run still has a
+/// stable identifier even with no session selected.
+fn session_id(args: &Args) -> String {
+    args.session_id
+        .clone()
+        .or_else(|| args.resume_id().map(str::to_string))
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string())
 }
